@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, random_split
 from torchvision import transforms
 from torchvision.models import convnext_small
 from torch_geometric.nn import GCNConv
+from torch_geometric.nn import global_mean_pool
 from PIL import Image
 import random
 import numpy as np
@@ -30,7 +31,7 @@ def set_seed(seed):
 # 解析命令行参数
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='PROTEINS')
-parser.add_argument('--batch_size', type=int, default=64)
+parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--image_size', type=int, default=64)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--epochs', type=int, default=50)
@@ -107,7 +108,8 @@ class ConvNeXtImageModel(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# 定义 GCN 图结构模型
+
+
 class GCNGraphModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(GCNGraphModel, self).__init__()
@@ -115,24 +117,27 @@ class GCNGraphModel(nn.Module):
         self.conv2 = GCNConv(hidden_dim, output_dim)
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, batch = data.x, data.edge_index, data.batch
         x = F.relu(self.conv1(x, edge_index))
         x = self.conv2(x, edge_index)
-        return x.mean(dim=0)  # 使用全局平均池化
+        # 使用全局平均池化，获取每个图的嵌入
+        graph_embedding = global_mean_pool(x, batch)
+        return graph_embedding
 
-# 多模态对比学习模型
 class MultiModalContrastiveModel(nn.Module):
     def __init__(self, image_embed_dim, graph_embed_dim, hidden_dim):
         super(MultiModalContrastiveModel, self).__init__()
         self.image_model = ConvNeXtImageModel()
         self.graph_model = GCNGraphModel(input_dim=3, hidden_dim=64, output_dim=graph_embed_dim)
-        self.fc = nn.Linear(image_embed_dim + graph_embed_dim, hidden_dim)
+        
+        # 添加降维层，将图像嵌入从 768 降到 128
+        self.image_fc = nn.Linear(image_embed_dim, graph_embed_dim)
 
     def forward(self, image, graph_data):
         image_embedding = self.image_model(image)
+        image_embedding = self.image_fc(image_embedding)  # 降维到 128
         graph_embedding = self.graph_model(graph_data)
-        combined_embedding = torch.cat((image_embedding, graph_embedding), dim=1)
-        return self.fc(combined_embedding)
+        return image_embedding, graph_embedding
 
 # 初始化模型和优化器
 model = MultiModalContrastiveModel(image_embed_dim=768, graph_embed_dim=128, hidden_dim=256).to(device)
@@ -140,11 +145,15 @@ optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 # 对比学习损失函数（InfoNCE Loss）
 def contrastive_loss(image_embeddings, graph_embeddings, temperature=0.5):
+    #print(f"[DEBUG] Image embeddings shape: {image_embeddings.shape}")
+    #print(f"[DEBUG] Graph embeddings shape: {graph_embeddings.shape}")
+
+    # 现在 image_embeddings 和 graph_embeddings 的形状应该是 [batch_size, embed_dim]
     similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
-    labels = torch.arange(image_embeddings.size(0)).to(device)
+    labels = torch.arange(image_embeddings.size(0)).to(image_embeddings.device)
     loss = F.cross_entropy(similarities / temperature, labels)
     return loss
-
+'''
 # 训练函数
 def train():
     model.train()
@@ -154,8 +163,8 @@ def train():
         graph_data = graph_data.to(device)
 
         optimizer.zero_grad()
-        image_embeddings = model.image_model(images)
-        graph_embeddings = model.graph_model(graph_data)
+        # 使用完整的模型前向传播
+        image_embeddings, graph_embeddings = model(images, graph_data)
         loss = contrastive_loss(image_embeddings, graph_embeddings)
         loss.backward()
         optimizer.step()
@@ -171,8 +180,8 @@ def test(loader):
         images = images.to(device)
         graph_data = graph_data.to(device)
 
-        image_embeddings = model.image_model(images)
-        graph_embeddings = model.graph_model(graph_data)
+        # 使用完整的模型前向传播
+        image_embeddings, graph_embeddings = model(images, graph_data)
         loss = contrastive_loss(image_embeddings, graph_embeddings)
         total_loss += loss.item() * images.size(0)
     return total_loss / len(loader.dataset)
@@ -181,9 +190,8 @@ def test(loader):
 best_val_loss = float('inf')
 for epoch in range(args.epochs):
     train_loss = train()
-    torch.cuda.empty_cache()  
+
     val_loss = test(val_loader)
-    torch.cuda.empty_cache()  
 
     if val_loss < best_val_loss:
         best_val_loss = val_loss
@@ -193,5 +201,82 @@ for epoch in range(args.epochs):
 
 # 最终测试
 test_loss = test(test_loader)
-torch.cuda.empty_cache()  
+
 print(f"Test Loss: {test_loss:.4f}")
+'''
+# 训练函数
+def train():
+    model.train()
+    total_loss = 0
+    total_correct = 0
+    total_samples = 0
+
+    for images, graph_data, labels in train_loader:
+        images = images.to(device)
+        graph_data = graph_data.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+        # 使用完整的模型前向传播
+        image_embeddings, graph_embeddings = model(images, graph_data)
+        loss = contrastive_loss(image_embeddings, graph_embeddings)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item() * images.size(0)
+
+        # 计算准确率
+        similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
+        preds = similarities.argmax(dim=1)
+        total_correct += (preds == labels).sum().item()
+        total_samples += labels.size(0)
+
+    avg_loss = total_loss / len(train_loader.dataset)
+    accuracy = total_correct / total_samples
+    return avg_loss, accuracy
+
+# 测试函数
+@torch.no_grad()
+def test(loader):
+    model.eval()
+    total_loss = 0
+    total_correct = 0
+    total_samples = 0
+
+    for images, graph_data, labels in loader:
+        images = images.to(device)
+        graph_data = graph_data.to(device)
+        labels = labels.to(device)
+
+        # 使用完整的模型前向传播
+        image_embeddings, graph_embeddings = model(images, graph_data)
+        loss = contrastive_loss(image_embeddings, graph_embeddings)
+        total_loss += loss.item() * images.size(0)
+
+        # 计算准确率
+        similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
+        preds = similarities.argmax(dim=1)
+        total_correct += (preds == labels).sum().item()
+        total_samples += labels.size(0)
+
+    avg_loss = total_loss / len(loader.dataset)
+    accuracy = total_correct / total_samples
+    return avg_loss, accuracy
+
+# 训练和验证流程
+best_val_acc = 0.0
+best_test_acc = 0.0
+for epoch in range(args.epochs):
+    train_loss, train_acc = train()
+    val_loss, val_acc = test(val_loader)
+    test_loss, test_acc = test(test_loader)
+
+    # 更新最优验证准确率及对应的测试准确率
+    if val_acc > best_val_acc:
+        best_val_acc = val_acc
+        best_test_acc = test_acc
+        print(f"Epoch {epoch}: New best validation accuracy: {val_acc:.4f}")
+
+    print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
+
+# 最终测试
+print(f"Best Validation Accuracy: {best_val_acc:.4f}, Corresponding Test Accuracy: {best_test_acc:.4f}")

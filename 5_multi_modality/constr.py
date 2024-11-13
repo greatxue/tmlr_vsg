@@ -143,67 +143,19 @@ class MultiModalContrastiveModel(nn.Module):
 model = MultiModalContrastiveModel(image_embed_dim=768, graph_embed_dim=128, hidden_dim=256).to(device)
 optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-# 对比学习损失函数（InfoNCE Loss）
-def contrastive_loss(image_embeddings, graph_embeddings, temperature=0.5):
-    #print(f"[DEBUG] Image embeddings shape: {image_embeddings.shape}")
-    #print(f"[DEBUG] Graph embeddings shape: {graph_embeddings.shape}")
 
-    # 现在 image_embeddings 和 graph_embeddings 的形状应该是 [batch_size, embed_dim]
-    similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
-    labels = torch.arange(image_embeddings.size(0)).to(image_embeddings.device)
-    loss = F.cross_entropy(similarities / temperature, labels)
+def contrastive_loss(image_embeddings, graph_embeddings, labels, temperature=0.5):
+    # 计算余弦相似度
+    similarities = F.cosine_similarity(image_embeddings, graph_embeddings)
+    
+    # 对相似度应用温度缩放
+    similarities = similarities / temperature
+    
+    # 使用二元交叉熵损失
+    labels = labels.float()  # 将标签转换为浮点型
+    loss = F.binary_cross_entropy_with_logits(similarities, labels)
     return loss
-'''
-# 训练函数
-def train():
-    model.train()
-    total_loss = 0
-    for images, graph_data, _ in train_loader:
-        images = images.to(device)
-        graph_data = graph_data.to(device)
 
-        optimizer.zero_grad()
-        # 使用完整的模型前向传播
-        image_embeddings, graph_embeddings = model(images, graph_data)
-        loss = contrastive_loss(image_embeddings, graph_embeddings)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * images.size(0)
-    return total_loss / len(train_loader.dataset)
-
-# 测试函数
-@torch.no_grad()
-def test(loader):
-    model.eval()
-    total_loss = 0
-    for images, graph_data, _ in loader:
-        images = images.to(device)
-        graph_data = graph_data.to(device)
-
-        # 使用完整的模型前向传播
-        image_embeddings, graph_embeddings = model(images, graph_data)
-        loss = contrastive_loss(image_embeddings, graph_embeddings)
-        total_loss += loss.item() * images.size(0)
-    return total_loss / len(loader.dataset)
-
-# 训练和验证流程
-best_val_loss = float('inf')
-for epoch in range(args.epochs):
-    train_loss = train()
-
-    val_loss = test(val_loader)
-
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        print(f"Epoch {epoch}: New best validation loss: {val_loss:.4f}")
-
-    print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-
-# 最终测试
-test_loss = test(test_loader)
-
-print(f"Test Loss: {test_loss:.4f}")
-'''
 # 训练函数
 def train():
     model.train()
@@ -217,16 +169,24 @@ def train():
         labels = labels.to(device)
 
         optimizer.zero_grad()
-        # 使用完整的模型前向传播
+
+        # 前向传播
         image_embeddings, graph_embeddings = model(images, graph_data)
-        loss = contrastive_loss(image_embeddings, graph_embeddings)
+
+        # 计算损失
+        loss = contrastive_loss(image_embeddings, graph_embeddings, labels)
         loss.backward()
         optimizer.step()
+
         total_loss += loss.item() * images.size(0)
 
         # 计算准确率
-        similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
-        preds = similarities.argmax(dim=1)
+        similarities = F.cosine_similarity(image_embeddings, graph_embeddings)
+        preds = (similarities > 0).long()  # 相似度大于 0 的为正类（1），否则为负类（0）
+        
+        #print(f"[DEBUG] Prediction: {preds}")
+        #print(f"[DEBUG] Label: {labels}")
+        
         total_correct += (preds == labels).sum().item()
         total_samples += labels.size(0)
 
@@ -236,29 +196,32 @@ def train():
 
 # 测试函数
 @torch.no_grad()
-def test(loader):
+def test(data_loader):
     model.eval()
     total_loss = 0
     total_correct = 0
     total_samples = 0
 
-    for images, graph_data, labels in loader:
-        images = images.to(device)
-        graph_data = graph_data.to(device)
-        labels = labels.to(device)
+    with torch.no_grad():
+        for images, graph_data, labels in data_loader:
+            images = images.to(device)
+            graph_data = graph_data.to(device)
+            labels = labels.to(device)
 
-        # 使用完整的模型前向传播
-        image_embeddings, graph_embeddings = model(images, graph_data)
-        loss = contrastive_loss(image_embeddings, graph_embeddings)
-        total_loss += loss.item() * images.size(0)
+            # 前向传播
+            image_embeddings, graph_embeddings = model(images, graph_data)
 
-        # 计算准确率
-        similarities = F.cosine_similarity(image_embeddings.unsqueeze(1), graph_embeddings.unsqueeze(0), dim=2)
-        preds = similarities.argmax(dim=1)
-        total_correct += (preds == labels).sum().item()
-        total_samples += labels.size(0)
+            # 计算损失，传入 labels 参数
+            loss = contrastive_loss(image_embeddings, graph_embeddings, labels)
+            total_loss += loss.item() * images.size(0)
 
-    avg_loss = total_loss / len(loader.dataset)
+            # 计算准确率
+            similarities = F.cosine_similarity(image_embeddings, graph_embeddings)
+            preds = (similarities > 0).long()
+            total_correct += (preds == labels).sum().item()
+            total_samples += labels.size(0)
+
+    avg_loss = total_loss / len(data_loader.dataset)
     accuracy = total_correct / total_samples
     return avg_loss, accuracy
 
@@ -274,9 +237,9 @@ for epoch in range(args.epochs):
     if val_acc > best_val_acc:
         best_val_acc = val_acc
         best_test_acc = test_acc
-        print(f"Epoch {epoch}: New best validation accuracy: {val_acc:.4f}")
+        print(f"=====Epoch {epoch}: New best validation acc=======")
 
-    print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
+    print(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}, Test Acc: {test_acc:.4f}")
 
 # 最终测试
 print(f"Best Validation Accuracy: {best_val_acc:.4f}, Corresponding Test Accuracy: {best_test_acc:.4f}")

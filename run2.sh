@@ -1,0 +1,9 @@
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 1 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 2 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 3 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 4 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 5 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 6 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 7 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 8 --model_type convnext_base 
+python3 /mnt/data1/zhaoxinjian/zhongkai/TMLR_VISG_/3_basic_model/visgnn.py --seed 9 --model_type convnext_base 

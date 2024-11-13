@@ -1,0 +1,2 @@
+Model Type,Seed,Best Epoch,Best Loss,Best Train Acc,Best Val Acc,Best Test Acc
+convnext_base,2,30,0.5414293569125487,0.7797752808988764,0.7027027027027027,0.7232142857142857

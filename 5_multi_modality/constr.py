@@ -181,7 +181,9 @@ def test(loader):
 best_val_loss = float('inf')
 for epoch in range(args.epochs):
     train_loss = train()
+    torch.cuda.empty_cache()  
     val_loss = test(val_loader)
+    torch.cuda.empty_cache()  
 
     if val_loss < best_val_loss:
         best_val_loss = val_loss
@@ -191,4 +193,5 @@ for epoch in range(args.epochs):
 
 # 最终测试
 test_loss = test(test_loader)
+torch.cuda.empty_cache()  
 print(f"Test Loss: {test_loss:.4f}")
